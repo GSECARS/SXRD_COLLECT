@@ -70,7 +70,7 @@ eiger2_crysalis_config = {
 
 log_file = "T:/dac_user/sxrd_logs/sxrd_log.txt"
 file_format_string = "%s%s_%4.4d_00001.tif"
-cycle_relative_path = '/2025/IDD_2025-3'
+cycle_relative_path = '/2026/IDD_2025-1'
 FILEPATH = 'T:/dac_user' + cycle_relative_path
 if detector == '13PIL3':
     DETECTOR_FILE_PATH = '/ramdisk/dac_user' + cycle_relative_path
