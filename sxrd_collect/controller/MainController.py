@@ -1197,6 +1197,20 @@ class MainController(object):
                                 self.detector
                             )
 
+                        # Check if file exists before collecting
+                        try:
+                            filenumber_int = int(filenumber) if filenumber else 1
+                        except (ValueError, TypeError):
+                            filenumber_int = 1
+                        file_exists, existing_file_path = self.check_file_will_exist(
+                            self.filepath, filename, filenumber_int, self.detector, num_files=1
+                        )
+                        if file_exists:
+                            reply = self.show_overwrite_dialog(existing_file_path)
+                            if reply == QtWidgets.QMessageBox.Cancel:
+                                self.reset_gui_state()
+                                return
+
                         logger.info(
                             "Performing still image for:\n\t\t{}\n\t\t{}".format(
                                 sample_point, experiment
@@ -1263,6 +1277,20 @@ class MainController(object):
                             _, filename, filenumber = self.get_filename_info(
                                 self.detector
                             )
+
+                        # Check if file exists before collecting
+                        try:
+                            filenumber_int = int(filenumber) if filenumber else 1
+                        except (ValueError, TypeError):
+                            filenumber_int = 1
+                        file_exists, existing_file_path = self.check_file_will_exist(
+                            self.filepath, filename, filenumber_int, self.detector, num_files=1
+                        )
+                        if file_exists:
+                            reply = self.show_overwrite_dialog(existing_file_path)
+                            if reply == QtWidgets.QMessageBox.Cancel:
+                                self.reset_gui_state()
+                                return
 
                         if self.detector == "pilatus":
                             caput(
@@ -1363,6 +1391,27 @@ class MainController(object):
                                 self.detector
                             )
 
+                        # Calculate number of steps for file existence check
+                        omega_step = experiment.omega_step
+                        num_steps = int(
+                            abs(experiment.omega_end - experiment.omega_start)
+                            / omega_step
+                        )
+                        
+                        # Check if any files exist before collecting
+                        try:
+                            filenumber_int = int(filenumber) if filenumber else 1
+                        except (ValueError, TypeError):
+                            filenumber_int = 1
+                        file_exists, existing_file_path = self.check_file_will_exist(
+                            self.filepath, filename, filenumber_int, self.detector, num_files=num_steps
+                        )
+                        if file_exists:
+                            reply = self.show_overwrite_dialog(existing_file_path)
+                            if reply == QtWidgets.QMessageBox.Cancel:
+                                self.reset_gui_state()
+                                return
+
                         if self.detector == "pilatus":
                             caput(
                                 epics_config[self.detector] + ":TIFF1:FilePath",
@@ -1401,7 +1450,6 @@ class MainController(object):
                                 sample_point, experiment
                             )
                         )
-                        omega_step = experiment.omega_step
                         time_per_step = experiment.time_per_step
 
                         if self.crysalis_config.create_crysalis_files_cb.isChecked():
@@ -2007,6 +2055,57 @@ class MainController(object):
 
     def check_filename_exists(self, filename):
         return os.path.isfile(filename + ".tif")
+    
+    def get_full_file_path(self, filepath, filename, filenumber, detector):
+        """
+        Constructs the full file path based on detector type.
+        For pilatus: filename_filenumber_00001.tif (format: %s%s_%4.4d_00001.tif)
+        For eiger2: filename_filenumber.h5
+        """
+        if detector == "pilatus":
+            # Format: filename_filenumber_00001.tif (filenumber is 4 digits: 0001, 0002, etc.)
+            full_filename = f"{filename}_{filenumber:04d}_00001.tif"
+        elif detector == "eiger2":
+            # Format: filename_filenumber.h5
+            full_filename = f"{filename}_{filenumber:03d}.h5"
+        else:
+            full_filename = f"{filename}_{filenumber:04d}_00001.tif"
+        
+        return os.path.join(filepath, full_filename)
+    
+    def check_file_will_exist(self, filepath, filename, filenumber, detector, num_files=1):
+        """
+        Checks if any of the files that will be created already exist.
+        For step scans, num_files > 1 to check multiple files.
+        Returns True if any file exists, False otherwise.
+        """
+        for i in range(num_files):
+            file_number = filenumber + i
+            full_path = self.get_full_file_path(filepath, filename, file_number, detector)
+            if os.path.isfile(full_path):
+                return True, full_path
+        return False, None
+    
+    def show_overwrite_dialog(self, file_path):
+        """
+        Shows a dialog asking the user if they want to overwrite an existing file.
+        Returns QtWidgets.QMessageBox.Yes if user wants to overwrite,
+        QtWidgets.QMessageBox.Cancel if user wants to cancel.
+        """
+        msg_box = QtWidgets.QMessageBox()
+        msg_box.setWindowFlags(QtCore.Qt.Tool)
+        msg_box.setText(
+            f"File already exists:\n{file_path}\n\n"
+            "Do you want to overwrite it?"
+        )
+        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+        msg_box.setWindowTitle("File Overwrite Warning")
+        msg_box.setStandardButtons(
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel
+        )
+        msg_box.setDefaultButton(QtWidgets.QMessageBox.Cancel)
+        msg_box.exec_()
+        return msg_box.result()
 
     def check_conditions(self):
         if int(caget("13IDD:m103.RBV")) > -170:
