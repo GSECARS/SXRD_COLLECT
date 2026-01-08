@@ -113,14 +113,17 @@ class MainController(object):
         self.automation1.enable_controller()
 
     def config_alternative_view(self):
-        # Add detector combo box to layout.
+        # Remove the crysalis config button from layout and hide it
         self.widget.horizontalLayout_9.removeWidget(self.widget.crysalis_config_btn)
-        self.widget.horizontalLayout_9.addWidget(
-            self.cmb_detectors, alignment=QtCore.Qt.AlignLeft
-        )
-        self.widget.horizontalLayout_9.addWidget(self.widget.crysalis_config_btn)
+        self.widget.crysalis_config_btn.setVisible(False)
 
-        self.cmb_detectors.setMinimumSize(QtCore.QSize(75, 32))
+        # Configure detector combo box - allow it to span 2 rows
+        # Set minimum height to approximately span 2 rows (checkboxes + spacing + input field row)
+        # Typical row height is around 25-30px, so 2 rows would be ~50-60px
+        self.cmb_detectors.setMinimumSize(QtCore.QSize(75, 50))
+        # Set size policy to allow vertical expansion
+        size_policy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
+        self.cmb_detectors.setSizePolicy(size_policy)
         self.cmb_detectors.setStyleSheet("padding: 0 3px 0 13px;")
 
         # Connect combo box
@@ -132,8 +135,50 @@ class MainController(object):
         self.cmb_detectors.addItem("Pilatus 1M")
         self.cmb_detectors.addItem("Pilatus MCdTe")
 
-        # Set crysalis config to visible.
-        self.widget.crysalis_config_btn.setVisible(True)
+        # Create a container widget for detector dropdown and CrysAlis config
+        self.detector_crysalis_container = QtWidgets.QWidget(self.widget)
+        # Use a grid layout: 2 rows, 3 columns (left area, middle spacer, detector on right)
+        self.detector_crysalis_layout = QtWidgets.QGridLayout()
+        self.detector_crysalis_layout.setContentsMargins(0, 0, 0, 0)
+        self.detector_crysalis_layout.setSpacing(6)
+        
+        # Extract widgets from CrysAlisConfig layout
+        self.crysalis_config.v_box.removeWidget(self.crysalis_config.create_crysalis_files_cb)
+        self.crysalis_config.v_box.removeWidget(self.crysalis_config.add_frames_in_tif_cb)
+        # Remove widgets from par_h_box
+        self.crysalis_config.par_h_box.removeWidget(self.crysalis_config.par_file_le)
+        self.crysalis_config.par_h_box.removeWidget(self.crysalis_config.load_par_file_btn)
+        # Remove the now-empty par_h_box layout item from v_box
+        for i in range(self.crysalis_config.v_box.count()):
+            item = self.crysalis_config.v_box.itemAt(i)
+            if item and item.layout() == self.crysalis_config.par_h_box:
+                self.crysalis_config.v_box.takeAt(i)
+                break
+        
+        # Row 0: Two checkboxes side by side on the left
+        self.detector_crysalis_layout.addWidget(self.crysalis_config.create_crysalis_files_cb, 0, 0)
+        self.detector_crysalis_layout.addWidget(self.crysalis_config.add_frames_in_tif_cb, 0, 1)
+        
+        # Row 1: Input field (expanding) and Load .par button on the left
+        self.detector_crysalis_layout.addWidget(self.crysalis_config.par_file_le, 1, 0)
+        self.detector_crysalis_layout.addWidget(self.crysalis_config.load_par_file_btn, 1, 1)
+        
+        # Detector dropdown on the right, spanning both rows (row 0-1, column 2)
+        # Add without vertical alignment constraint so it can expand to fill both rows
+        self.detector_crysalis_layout.addWidget(self.cmb_detectors, 0, 2, 2, 1, QtCore.Qt.AlignRight)
+        
+        # Set column stretch so input field expands
+        self.detector_crysalis_layout.setColumnStretch(0, 1)  # Input field column expands
+        
+        # Embed CrysAlis config widget (for connections, but hide it since we're using its widgets directly)
+        self.crysalis_config.setParent(self.detector_crysalis_container)
+        self.crysalis_config.setWindowFlags(QtCore.Qt.Widget)
+        self.crysalis_config.setVisible(False)  # Hide the widget, we're using its child widgets directly
+        
+        self.detector_crysalis_container.setLayout(self.detector_crysalis_layout)
+        
+        # Add container to the main layout (replacing where the button was, aligned right)
+        self.widget.horizontalLayout_9.addWidget(self.detector_crysalis_container, alignment=QtCore.Qt.AlignRight)
 
     def detector_selection_changed(self):
         if self.cmb_detectors.currentText().startswith("Eiger"):
@@ -173,9 +218,7 @@ class MainController(object):
 
     def connect_buttons(self):
         self.widget.epics_config_btn.clicked.connect(self.configure_epics_clicked)
-        self.widget.crysalis_config_btn.clicked.connect(
-            self.crysalis_config_btn_clicked
-        )
+        # Removed crysalis_config_btn connection - button is now removed
 
         self.widget.add_setup_btn.clicked.connect(self.add_experiment_setup_btn_clicked)
         self.widget.delete_setup_btn.clicked.connect(
@@ -973,8 +1016,7 @@ class MainController(object):
     def configure_epics_clicked(self):
         pass
 
-    def crysalis_config_btn_clicked(self):
-        self.crysalis_config.setVisible(True)
+    # Removed crysalis_config_btn_clicked - button is now removed and config is embedded
 
     def open_path_btn_clicked(self):
         path = FILEPATH + self.filepath[4:]
@@ -2328,37 +2370,48 @@ class WorkerThread(QtCore.QThread):
 
 
 class CrysalisConfig(QtWidgets.QWidget):
-    def __init__(self):
-        super(CrysalisConfig, self).__init__()
-        self.setVisible(False)
+    def __init__(self, parent=None):
+        super(CrysalisConfig, self).__init__(parent)
+        self.setVisible(False)  # Keep hidden until embedded - prevents showing as separate window
         self.create_widgets()
         self.create_layout()
         self.create_connections()
-        self.setWindowTitle("CrysAlisCreator")
+        # Removed setWindowTitle since it's now embedded, not a separate window
 
     def create_widgets(self):
-        self.create_crysalis_files_cb = QtWidgets.QCheckBox(
-            "Create CrysAlis files for single-crystal data collections"
-        )
+        self.create_crysalis_files_cb = QtWidgets.QCheckBox("Create CrysAlis files")
+        self.create_crysalis_files_cb.setToolTip("Create CrysAlis files for single-crystal data collections")
         # self.create_par_file_from_exp_params_cb = QtWidgets.QCheckBox(
         #      'Create .par file from the experimental parameters (not recommended)')
         # self.read_par_file_cb = QtWidgets.QCheckBox('Read .par file from the calibration crystal')
         self.par_file_le = QtWidgets.QLineEdit()
+        # No maximum width - let it expand to fill available space in the grid layout
         self.load_par_file_btn = QtWidgets.QPushButton("Load .par")
-        self.add_frames_in_tif_cb = QtWidgets.QCheckBox(
-            "Add all frames in TIF (Pilatus only)"
-        )
+        self.load_par_file_btn.setMaximumWidth(70)
+        self.add_frames_in_tif_cb = QtWidgets.QCheckBox("Add all frames in TIF")
+        self.add_frames_in_tif_cb.setToolTip("Add all frames in TIF (Pilatus only)")
 
     def create_layout(self):
+        # Use a compact vertical layout with minimal spacing
+        # Note: Widgets may be moved to other layouts by the parent, which is fine
         self.v_box = QtWidgets.QVBoxLayout()
-        self.par_h_box = QtWidgets.QHBoxLayout()
+        self.v_box.setContentsMargins(0, 0, 0, 0)
+        self.v_box.setSpacing(2)  # Minimal spacing between elements
+        
+        # First checkbox
         self.v_box.addWidget(self.create_crysalis_files_cb)
-        # self.v_box.addWidget(self.create_par_file_from_exp_params_cb)
-        # self.v_box.addWidget(self.read_par_file_cb)
+        
+        # Par file controls in horizontal layout
+        self.par_h_box = QtWidgets.QHBoxLayout()
+        self.par_h_box.setContentsMargins(0, 0, 0, 0)
+        self.par_h_box.setSpacing(4)
         self.par_h_box.addWidget(self.par_file_le)
         self.par_h_box.addWidget(self.load_par_file_btn)
         self.v_box.addLayout(self.par_h_box)
+        
+        # Second checkbox
         self.v_box.addWidget(self.add_frames_in_tif_cb)
+        
         self.setLayout(self.v_box)
 
     def create_connections(self):
