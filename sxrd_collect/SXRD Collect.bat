@@ -1,0 +1,1 @@
+C:\Users\dac_user\AppData\Local\Continuum\anaconda3\envs\p368\python.exe sxrd_collect.py

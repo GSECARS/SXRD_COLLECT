@@ -1,0 +1,4 @@
+
+
+class IDDConfig:
+    pass

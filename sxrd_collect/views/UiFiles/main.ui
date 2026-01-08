@@ -484,7 +484,7 @@ Conifguration</string>
            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; color:#000000;&quot;&gt;If this option is checked, the filename will be: &lt;/span&gt;&lt;span style=&quot; color:#0000ff;&quot;&gt;Basename_Frame Nr&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style=&quot; color:#ff0000;&quot;&gt;In case of several experimental setups/sample points, the Frame Nr will continuously increase wihtout any changes in the basename!&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
           </property>
           <property name="text">
-           <string>Do not add suffixes to basename</string>
+           <string>Custom filename</string>
           </property>
          </widget>
         </item>
@@ -1357,39 +1357,6 @@ QPushButton::hover{
         </size>
        </property>
       </spacer>
-     </item>
-     <item>
-      <layout class="QVBoxLayout" name="verticalLayout_3">
-       <item>
-        <widget class="QPushButton" name="collect_bkg_btn">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="text">
-          <string>Collect Background</string>
-         </property>
-         <property name="default">
-          <bool>false</bool>
-         </property>
-         <property name="flat">
-          <bool>false</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QCheckBox" name="auto_bkg_cb">
-         <property name="text">
-          <string>automatic</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-      </layout>
      </item>
     </layout>
    </item>

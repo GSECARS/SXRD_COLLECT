@@ -19,8 +19,10 @@ __author__ = 'Clemens Prescher'
 
 from qtpy import QtGui, QtCore, QtWidgets
 from functools import partial
-
-from .UiFiles.mainUI import Ui_SXRDCollectWidget
+from epics import caput, caget, camonitor
+import time
+from sxrd_collect.config import epics_config, DETECTOR_FILE_PATH, file_format_string
+from sxrd_collect.views.UiFiles.mainUI import Ui_SXRDCollectWidget
 
 
 class MainView(QtWidgets.QWidget, Ui_SXRDCollectWidget):
@@ -55,6 +57,97 @@ class MainView(QtWidgets.QWidget, Ui_SXRDCollectWidget):
         self.y_min_txt.setValidator(QtGui.QDoubleValidator())
         self.y_max_txt.setValidator(QtGui.QDoubleValidator())
         self.y_step_txt.setValidator(QtGui.QDoubleValidator())
+
+
+        # TODO: Temporary disconnected reset button - Chris        
+        self.btn_reset.setEnabled(False)
+        # self.btn_reset.clicked.connect(self.reset_state)
+
+        self.btn_power_cycle.clicked.connect(self.power_cycle_detector)
+        self.io_iterations.setValidator(QtGui.QDoubleValidator(0, 1000, 0))
+        self.io_iterations.returnPressed.connect(self.change_iterations)
+        self.power_cycle_iterations = 1
+        self.detector_status = None
+        camonitor(epics_config['status_message'], callback=self.monitor_callback)
+
+    def monitor_callback(self, **kwargs):
+        self.detector_status = kwargs["char_value"]
+
+    def change_iterations(self):
+        if int(self.io_iterations.text()) > 20 or int(self.io_iterations.text()) <= 0:
+            self.io_iterations.setText(str(self.power_cycle_iterations))
+        else:
+            self.power_cycle_iterations = int(self.io_iterations.text())
+
+        QtWidgets.QApplication.processEvents()
+
+    # Added power cycle - Chris
+    def power_cycle_detector(self):
+
+        for i in range(0, self.power_cycle_iterations):
+
+            self.status_lbl.setStyleSheet("font-size: {}px; color: {};".format(20, "#FF0000"))
+            self.status_lbl.setText(f"Power Cycle ({i + 1}/{self.power_cycle_iterations})")
+            QtWidgets.QApplication.processEvents()
+
+            # Reset detector
+            caput(epics_config['pilatus'] + ":cam1:ResetPower", 1, wait=True)
+            time.sleep(0.5)
+
+            while self.detector_status != "Camserver returned OK":
+                continue
+
+        self.status_lbl.setStyleSheet("font-size: {}px; color: {};".format(20, "#00FF00"))
+        self.status_lbl.setText("Power Cycle Finished")
+        QtWidgets.QApplication.processEvents()
+
+    def reset_state(self):
+        self.status_lbl.setStyleSheet("font-size: {}px; color: {};".format(20, "#FF0000"))
+        self.status_lbl.setText("Resetting Detector")
+
+        QtWidgets.QApplication.processEvents()
+
+        # Disable reset button
+        self.btn_reset.setEnabled(False)
+
+        # Make sure that table shutter is closed when user aborts (Stella)
+        caput(epics_config['table_shutter'], 1)
+
+        # Abort all stage operations - Chris
+        caput(epics_config['all_stop_xps'], 1)
+        caput(epics_config['all_stop'], 1)
+
+        # Abort detector collection - Chris
+        caput(epics_config["pilatus"] + ":cam1:Acquire", 0)
+
+        # Reset to internal mode
+        caput(epics_config['pilatus'] + ':cam1:TriggerMode', 0, wait=True)
+
+        # E-Set detector - Chris
+        caput(epics_config["pilatus"] + ":cam1:ThresholdApply", 1)
+        time.sleep(2)
+
+        # Reset detector number of images - Chris
+        caput(epics_config["pilatus"] + ":cam1:NumImages", 1)
+        caput(epics_config["pilatus"] + ":Proc1:NumFilter", 1)
+
+        # Reset file format and ramdisk file path - Chris
+        current_file_path = DETECTOR_FILE_PATH + "/pilatus"
+        current_file_path_pv = epics_config["pilatus"] + ":cam1:FilePath"
+
+        caput(epics_config["pilatus"] + ":cam1:FileTemplate", file_format_string)
+        if caget(current_file_path_pv, as_string=True) != current_file_path:
+            caput(current_file_path_pv, current_file_path)
+
+        # Enable reset button
+        self.btn_reset.setEnabled(True)
+
+        while self.detector_status != "Camserver returned OK":
+            continue
+
+        self.status_lbl.setStyleSheet("font-size: {}px; color: {};".format(20, "#00FF00"))
+        self.status_lbl.setText("Reset Finished")
+        QtWidgets.QApplication.processEvents()
 
     def add_experiment_setup(self, name, detector_pos_x, detector_pos_y, omega_start,
                              omega_end, omega_step, exposure_time):
