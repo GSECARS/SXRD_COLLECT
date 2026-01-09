@@ -56,6 +56,28 @@ epics_config = {
     'detector_trigger_17': '13IDD:EDIO24_1:Bo17'
 }
 
+# Newport XPS Configuration
+current_xps = "newport-xps16.cars.aps.anl.gov"
+
+xps_config = {
+    "HOST": current_xps,
+    "PORT": 5001,
+    "TIMEOUT": 10,
+    "GROUP NAME": "G6",
+    "POSITIONERS": "ST-Hor",
+    "USER": "Administrator",
+    "PASSWORD": "Administrator",
+    "TRAJ_FOLDER": "Public/trajectories",
+    "GATHER TITLES": "# XPS Gathering Data\n#--------------",
+    "GATHER OUTPUTS": (
+        "CurrentPosition",
+        "FollowingError",
+        "SetpointPosition",
+        "CurrentVelocity",
+    ),
+    "DEFAULT ACCEL": [2, 2, 2, 2],
+}
+
 pilatus_crysalis_config = {
         'set_file': 'P:\\dac_user\\Crysalis_config\\pilatus_1m.set',
         'ccd_file': 'P:\\dac_user\\Crysalis_config\\pilatus_1m.ccd',

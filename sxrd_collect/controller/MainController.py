@@ -44,6 +44,7 @@ from sxrd_collect.config import (
     file_format_string,
     log_file,
     pilatus_crysalis_config,
+    xps_config,
 )
 from sxrd_collect.crysalis_creator import (
     copy_set_ccd,
@@ -56,6 +57,7 @@ from sxrd_collect.crysalis_creator import (
 from sxrd_collect.measurement import (
     collect_single_data,
     collect_step_data,
+    collect_still_map_with_xps,
     collect_wide_data,
     move_to_sample_pos,
 )
@@ -111,6 +113,19 @@ class MainController(object):
             pso_output_pin=PsoOutputPin.iXC4eAuxiliaryMarkerDifferential,
         )
         self.automation1.enable_controller()
+
+        # Initialize Newport XPS connection
+        try:
+            from newportxps import NewportXPS
+            self.xps_with_group = NewportXPS(
+                xps_config["HOST"], 
+                username=xps_config["USER"], 
+                password=xps_config["PASSWORD"]
+            )
+            logger.info("Newport XPS connection initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Newport XPS connection: {e}. XPS trajectories will not be available.")
+            self.xps_with_group = None
 
     def config_alternative_view(self):
         # Remove the crysalis config button from layout and hide it
@@ -1133,6 +1148,99 @@ class MainController(object):
                     )
                     continue
 
+                # Check if we're doing a still map and should use XPS trajectories
+                still_points_for_exp = [sp for sp in self.model.sample_points 
+                                       if sp.perform_still_for_setup[exp_ind]]
+                use_xps_for_still_map = (self.widget.use_xps_trajectories_still_cb.isChecked() 
+                                        and len(still_points_for_exp) > 1 
+                                        and self.xps_with_group is not None)
+                
+                if use_xps_for_still_map:
+                    # Group still points by y, z coordinates (same row in map)
+                    from collections import defaultdict
+                    rows = defaultdict(list)
+                    for sp in still_points_for_exp:
+                        row_key = (round(sp.y, 6), round(sp.z, 6))  # Round to avoid float precision issues
+                        rows[row_key].append((sp.x, sp.name))
+                    
+                    # Process each row with XPS trajectories
+                    for (y, z), points in rows.items():
+                        if not self.check_if_aborted():
+                            break
+                        
+                        # Sort x positions (maintain order for snake pattern if needed)
+                        points_sorted = sorted(points, key=lambda p: p[0])
+                        x_positions = [p[0] for p in points_sorted]
+                        point_names = [p[1] for p in points_sorted]
+                        
+                        # Calculate exposure time
+                        exposure_time = (
+                            abs(experiment.omega_end - experiment.omega_start)
+                            / experiment.omega_step
+                            * experiment.time_per_step
+                        )
+                        
+                        current_omega = caget(
+                            epics_config["sample_position_omega"], as_string=False
+                        )
+                        
+                        # Set up file naming - for XPS trajectories, we'll handle per-position naming
+                        # Build filename mapping for rename_files mode
+                        filename_map = {}
+                        if self.widget.rename_files_cb.isChecked():
+                            for pt_name in point_names:
+                                filename_map[pt_name] = self.build_file_name(pt_name, experiment.name)
+                            first_filename = filename_map[point_names[0]] if point_names else self.build_file_name("map_point", experiment.name)
+                            filenumber = self.widget.frame_number_txt.text()
+                        elif self.widget.no_suffices_cb.isChecked():
+                            first_filename = self.basename
+                            _, _, filenumber = self.get_filename_info(self.detector)
+                            for pt_name in point_names:
+                                filename_map[pt_name] = self.basename
+                        else:
+                            _, first_filename, filenumber = self.get_filename_info(self.detector)
+                            for pt_name in point_names:
+                                filename_map[pt_name] = first_filename
+                        
+                        logger.info(
+                            f"Performing still map with XPS trajectories: {len(x_positions)} positions "
+                            f"at y={y:.4f}, z={z:.4f}"
+                        )
+                        
+                        # Collect the row using XPS trajectories
+                        collect_still_map_thread = Thread(
+                            target=collect_still_map_with_xps,
+                            kwargs={
+                                "xps": self.xps_with_group,
+                                "detector_choice": self.detector,
+                                "detector_position_x": experiment.detector_pos_x,
+                                "detector_position_z": experiment.detector_pos_z,
+                                "exposure_time": abs(exposure_time),
+                                "x_positions": x_positions,
+                                "y": y,
+                                "z": z,
+                                "omega": current_omega,
+                                "sample_point_names": point_names,
+                                "filepath": self.filepath,
+                                "filename_base": first_filename,
+                                "filenumber_base": filenumber,
+                                "filename_map": filename_map,
+                                "rename_files": self.widget.rename_files_cb.isChecked(),
+                                "callback_fcn": self.check_if_aborted,
+                            },
+                        )
+                        collect_still_map_thread.start()
+                        
+                        while collect_still_map_thread.is_alive():
+                            QtWidgets.QApplication.processEvents()
+                            time.sleep(0.2)
+                        
+                        # Update frame counter for all points in this row
+                        c_frame += len(x_positions)
+                        if self.widget.rename_files_cb.isChecked():
+                            self.increase_point_number()
+                
+                # Process individual still points (if not using XPS or single points)
                 for sample_point in self.model.sample_points:
                     if not self.widget.test_mode_cb.isChecked():
                         if not caget("13IDA:eps_mbbi25") or not caget(
@@ -1151,6 +1259,10 @@ class MainController(object):
 
                     if not self.check_if_aborted():
                         break
+
+                    # Skip if this point was already collected with XPS
+                    if use_xps_for_still_map and sample_point.perform_still_for_setup[exp_ind]:
+                        continue
 
                     if sample_point.perform_still_for_setup[exp_ind]:
                         self.set_status_lbl(
@@ -2381,6 +2493,7 @@ class CrysalisConfig(QtWidgets.QWidget):
     def create_widgets(self):
         self.create_crysalis_files_cb = QtWidgets.QCheckBox("Create CrysAlis files")
         self.create_crysalis_files_cb.setToolTip("Create CrysAlis files for single-crystal data collections")
+        self.create_crysalis_files_cb.setChecked(True)
         # self.create_par_file_from_exp_params_cb = QtWidgets.QCheckBox(
         #      'Create .par file from the experimental parameters (not recommended)')
         # self.read_par_file_cb = QtWidgets.QCheckBox('Read .par file from the calibration crystal')

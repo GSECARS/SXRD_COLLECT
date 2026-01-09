@@ -88,8 +88,16 @@ class SxrdModel(object):
 
         map = OrderedDict()
 
-        for y in y_map:
-            for x in x_map:
+        for y_ind, y in enumerate(y_map):
+            # Snake pattern: alternate direction for each row
+            # Even rows (0, 2, 4...): left to right
+            # Odd rows (1, 3, 5...): right to left
+            if y_ind % 2 == 0:
+                x_iter = x_map  # Left to right
+            else:
+                x_iter = x_map[::-1]  # Right to left (reversed)
+            
+            for x in x_iter:
                 point_name = "{}_map_{}".format(name_center, ind+1)
                 self.add_sample_point(point_name, x, y, z_center)
                 map[point_name] = [x, y, z_center]

@@ -27,8 +27,17 @@ logging.basicConfig()
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-from sxrd_collect.config import epics_config
+from sxrd_collect.config import epics_config, xps_config
 from sxrd_collect.utils import move_photodiode_out
+
+
+HOST = xps_config['HOST']
+GROUP_NAME = xps_config['GROUP NAME']
+POSITIONERS = xps_config['POSITIONERS']
+DEFAULT_ACCEL = xps_config['DEFAULT ACCEL']
+USERNAME = xps_config["USER"]
+PASSWORD = xps_config["PASSWORD"]
+GATHER_OUTPUTS = xps_config['GATHER OUTPUTS']
 
 def get_sample_position():
     x_pos = caget(epics_config['sample_position_x'])
@@ -229,6 +238,154 @@ def collect_single_data(detector_choice, detector_position_x, detector_position_
 
     logger.info('Still data collection finished.\n')
 
+    return
+
+
+def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detector_position_z, 
+                                 exposure_time, x_positions, y, z, omega, sample_point_names=None, 
+                                 filepath=None, filename_base=None, filenumber_base=None, 
+                                 filename_map=None, rename_files=False, callback_fcn=None):
+    """
+    Performs still map collection using XPS trajectories for x motor movement.
+    Uses XPS define_line_trajectories to move x motor through all positions, triggering detector at each position.
+    
+    :param xps: NewportXPS instance with group configured
+    :param detector_choice: Which detector to use (pilatus or eiger2)
+    :param detector_position_x: Detector x position
+    :param detector_position_z: Detector z position
+    :param exposure_time: Exposure time per still image in seconds
+    :param x_positions: List of x positions to collect (sorted)
+    :param y: Sample y position (constant for this map row)
+    :param z: Sample z position (constant for this map row)
+    :param omega: Omega angle (constant)
+    :param sample_point_names: Optional list of sample point names for logging (same order as x_positions)
+    :param filepath: File path for saving images
+    :param filename_base: Base filename (will be updated per position if rename_files is True)
+    :param filenumber_base: Base file number
+    :param rename_files: If True, use sample_point_names for file naming
+    :param callback_fcn: Optional callback function to check for abort (returns False to abort)
+    """
+    if xps is None:
+        logger.error("XPS connection not available. Cannot use XPS trajectories.")
+        return
+    
+    if callback_fcn is not None and not callback_fcn():
+        logger.info('Still map collection was aborted before starting!')
+        return
+    
+    # Move the photodiode out
+    move_photodiode_out()
+    
+    # Move y, z, omega to correct positions (constant for this map row)
+    logger.info(f'Moving to map row: y={y}, z={z}, omega={omega}')
+    move_to_sample_pos(x_positions[0], y, z)  # Move to first x position
+    move_to_omega_position(omega)
+    move_to_detector_position(detector_position_x, detector_position_z, detector_choice)
+    
+    # Prepare detector settings
+    previous_detector_settings = prepare_detector_settings(detector_choice)
+    
+    num_positions = len(x_positions)
+    
+    # Calculate scan parameters for XPS trajectory
+    scan_start = x_positions[0]
+    scan_end = x_positions[-1]
+    scan_range = scan_end - scan_start
+    
+    # Calculate step size (assuming uniform spacing, use average if not)
+    if num_positions > 1:
+        step = scan_range / (num_positions - 1)
+    else:
+        step = 0
+    
+    # Total scan time
+    scantime = exposure_time * num_positions
+    
+    logger.info(f'Starting XPS trajectory for still map: {num_positions} positions')
+    logger.info(f'XPS trajectory: start={scan_start:.4f}, end={scan_end:.4f}, step={step:.4f}, scantime={scantime:.2f}s')
+    
+    # Set up detector for multiple acquisitions
+    if detector_choice == 'eiger2':
+        caput(epics_config[detector_choice] + ':cam1:TriggerMode', 2, wait=True)  # External series
+        caput(epics_config[detector_choice] + ':cam1:AcquirePeriod', exposure_time*0.99-0.001, wait=True)
+        caput(epics_config[detector_choice] + ':HDF1:NumCapture', num_positions)
+        caput(epics_config[detector_choice] + ':HDF1:Capture', 1)
+    elif detector_choice == 'pilatus':
+        caput(epics_config[detector_choice] + ':cam1:TriggerMode', 3, wait=True)  # Multi-Trigger
+    
+    caput(epics_config[detector_choice] + ':cam1:AcquireTime', exposure_time*0.99-0.001, wait=True)
+    caput(epics_config[detector_choice] + ':cam1:NumImages', num_positions, wait=True)
+    
+    # Set up file naming for first position (will need to handle per-position naming differently)
+    if filepath and filename_base is not None:
+        if detector_choice == "pilatus":
+            caput(epics_config[detector_choice] + ":TIFF1:FilePath", str(filepath), wait=True)
+            caput(epics_config[detector_choice] + ":TIFF1:FileName", str(filename_base), wait=True)
+            try:
+                first_filenumber = int(filenumber_base) if filenumber_base else 1
+            except (ValueError, TypeError):
+                first_filenumber = 1
+            caput(epics_config[detector_choice] + ":TIFF1:FileNumber", first_filenumber, wait=True)
+        elif detector_choice == "eiger2":
+            caput(epics_config[detector_choice] + ":HDF1:FilePath", str(filepath), wait=True)
+            caput(epics_config[detector_choice] + ":HDF1:FileName", str(filename_base), wait=True)
+            try:
+                first_filenumber = int(filenumber_base) if filenumber_base else 1
+            except (ValueError, TypeError):
+                first_filenumber = 1
+            caput(epics_config[detector_choice] + ":HDF1:FileNumber", first_filenumber, wait=True)
+    
+    # Define XPS trajectory
+    try:
+        xps.define_line_trajectories(
+            axis=POSITIONERS,
+            group=GROUP_NAME,
+            stop=scan_range,
+            step=step,
+            pixeltime=None,
+            scantime=scantime,
+        )
+        
+        # Start detector acquisition
+        caput(epics_config[detector_choice] + ':cam1:Acquire', 1)
+        
+        # Run XPS trajectory
+        trajectory_name = "still_map_x_trajectory"
+        xps.run_trajectory(name=trajectory_name, save=False, clean=True)
+        
+        # Wait for detector acquisition to complete
+        while caget(epics_config[detector_choice] + ':cam1:Acquire'):
+            time.sleep(0.1)
+            if callback_fcn is not None and not callback_fcn():
+                logger.info('Still map collection was aborted during trajectory!')
+                break
+        
+        logger.info('XPS trajectory completed')
+        
+    except Exception as e:
+        logger.error(f'Error running XPS trajectory: {e}')
+        # Fall back to individual movements if trajectory fails
+        logger.info('Falling back to individual position movements')
+        for idx, x_pos in enumerate(x_positions):
+            if callback_fcn is not None and not callback_fcn():
+                break
+            
+            motor_x = PV(epics_config['sample_position_x'])
+            motor_x.put(x_pos, wait=True)
+            time.sleep(0.1)
+            
+            if detector_choice == 'eiger2':
+                caput(epics_config[detector_choice] + ':HDF1:NumCapture', 1)
+                caput(epics_config[detector_choice] + ':HDF1:Capture', 1)
+                time.sleep(0.2)
+            
+            caput(epics_config[detector_choice] + ':cam1:Acquire', 1, wait=True, timeout=300)
+            while caget(epics_config[detector_choice] + ':cam1:Acquire'):
+                time.sleep(0.1)
+    
+    reset_detector_settings(previous_detector_settings)
+    logger.info('Still map collection with XPS finished.\n')
+    
     return
 
 
