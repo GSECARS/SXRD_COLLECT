@@ -194,12 +194,31 @@ class MainController(object):
         
         # Add container to the main layout (replacing where the button was, aligned right)
         self.widget.horizontalLayout_9.addWidget(self.detector_crysalis_container, alignment=QtCore.Qt.AlignRight)
+        
+        # Set initial visibility state based on default detector selection
+        # "Eiger 2S 9M" is the first item, so it will be selected by default
+        is_eiger = self.cmb_detectors.currentText() == "Eiger 2S 9M"
+        self.crysalis_config.add_frames_in_tif_cb.setVisible(not is_eiger)
+        self.widget.btn_power_cycle.setVisible(not is_eiger)
+        self.widget.io_iterations.setVisible(not is_eiger)
+        self.widget.lbl_iterations.setVisible(not is_eiger)
+        self.widget.btn_reset.setVisible(not is_eiger)
 
     def detector_selection_changed(self):
         if self.cmb_detectors.currentText().startswith("Eiger"):
             self.detector = "eiger2"
         else:
             self.detector = "pilatus"
+
+        # Show/hide widgets based on detector selection
+        is_eiger = self.cmb_detectors.currentText() == "Eiger 2S 9M"
+        
+        # Hide widgets when Eiger 2S 9M is selected, show otherwise
+        self.crysalis_config.add_frames_in_tif_cb.setVisible(not is_eiger)
+        self.widget.btn_power_cycle.setVisible(not is_eiger)
+        self.widget.io_iterations.setVisible(not is_eiger)
+        self.widget.lbl_iterations.setVisible(not is_eiger)
+        self.widget.btn_reset.setVisible(not is_eiger)
 
         self.clear_experiment_setup_btn_clicked(True)
 
@@ -925,7 +944,7 @@ class MainController(object):
         if self.widget.no_suffices_cb.isChecked():
             _, _, filenumber = self.get_filename_info(self.detector)
             example_str = (
-                self.filepath + "/" + self.basename + "_" + str("%03d" % filenumber)
+                self.filepath + "/" + self.basename + "_" + str("%04d" % filenumber)
             )
 
         elif self.widget.rename_files_cb.isChecked():
@@ -935,32 +954,32 @@ class MainController(object):
                 or len(self.model.sample_points) == 0
             ):
                 example_str = (
-                    self.filepath + "/" + self.basename + "_" + "S1_P1_E1_s_001"
+                    self.filepath + "/" + self.basename + "_" + "S1_P1_E1_s_0001"
                 )
             else:
                 for exp_ind, experiment in enumerate(self.model.experiment_setups):
                     for sample_point in self.model.sample_points:
                         if sample_point.perform_still_for_setup[exp_ind]:
                             example_str = self.build_file_name(
-                                sample_point.name, experiment.name, "001"
+                                sample_point.name, experiment.name, "0001"
                             )
                             no_exp = False
                             break
                         elif sample_point.perform_wide_scan_for_setup[exp_ind]:
                             example_str = self.build_file_name(
-                                sample_point.name, experiment.name, "w_001"
+                                sample_point.name, experiment.name, "w_0001"
                             )
                             no_exp = False
                             break
                         elif sample_point.perform_step_scan_for_setup[exp_ind]:
                             example_str = self.build_file_name(
-                                sample_point.name, experiment.name, "s_001"
+                                sample_point.name, experiment.name, "s_0001"
                             )
                             no_exp = False
                             break
                 if no_exp:
                     example_str = (
-                        self.filepath + "/" + self.basename + "_" + "S1_P1_E1_s_001"
+                        self.filepath + "/" + self.basename + "_" + "S1_P1_E1_s_0001"
                     )
         else:
             if self.detector == "pilatus":
@@ -972,7 +991,7 @@ class MainController(object):
                     )
                     + "_"
                     + str(
-                        "%03d"
+                        "%04d"
                         % caget(epics_config[self.detector] + ":TIFF1:FileNumber")
                     )
                 )
@@ -985,7 +1004,7 @@ class MainController(object):
                     )
                     + "_"
                     + str(
-                        "%03d" % caget(epics_config[self.detector] + ":HDF1:FileNumber")
+                        "%04d" % caget(epics_config[self.detector] + ":HDF1:FileNumber")
                     )
                 )
             if example_str is None:
@@ -993,6 +1012,9 @@ class MainController(object):
 
         self.example_str = example_str
 
+        # Determine file extension based on detector
+        file_ext = ".h5" if self.detector == "eiger2" else ".tif"
+        
         if (
             len(self.model.experiment_setups) == 0
             or len(self.model.sample_points) == 0
@@ -1001,7 +1023,7 @@ class MainController(object):
             if len(example_str) > 40:
                 example_str = "..." + example_str[len(example_str) - 40 :]
             self.widget.example_filename_lbl.setText(
-                "<font color = '#888888'>" + example_str + ".tif</font>"
+                "<font color = '#888888'>" + example_str + file_ext + "</font>"
             )
             return
         elif self.check_filename_exists(FILEPATH + example_str[4:]):
@@ -1010,21 +1032,21 @@ class MainController(object):
             self.widget.example_filename_lbl.setText(
                 "<font color = '#AA0000' style='font-weight:bold'>"
                 + example_str
-                + ".tif</font>"
+                + file_ext + "</font>"
             )
             return
         elif not self.check_filepath_exists():
             if len(example_str) > 40:
                 example_str = "..." + example_str[len(example_str) - 40 :]
             self.widget.example_filename_lbl.setText(
-                "<font color = '#FF5500'>" + example_str + ".tif</font>"
+                "<font color = '#FF5500'>" + example_str + file_ext + "</font>"
             )
             return
         else:
             if len(example_str) > 40:
                 example_str = "..." + example_str[len(example_str) - 40 :]
             self.widget.example_filename_lbl.setText(
-                "<font color = '#228B22'>" + example_str + ".tif</font>"
+                "<font color = '#228B22'>" + example_str + file_ext + "</font>"
             )
             return
 
@@ -1157,6 +1179,7 @@ class MainController(object):
                 
                 if use_xps_for_still_map:
                     # Group still points by y, z coordinates (same row in map)
+                    # Preserve original order from still_points_for_exp (same as normal still maps)
                     from collections import defaultdict
                     rows = defaultdict(list)
                     for sp in still_points_for_exp:
@@ -1164,14 +1187,17 @@ class MainController(object):
                         rows[row_key].append((sp.x, sp.name))
                     
                     # Process each row with XPS trajectories
-                    for (y, z), points in rows.items():
+                    # Iterate rows in a stable order (sorted by y then z)
+                    for row_idx, ((y, z), points) in enumerate(sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1]))):
                         if not self.check_if_aborted():
                             break
                         
-                        # Sort x positions (maintain order for snake pattern if needed)
-                        points_sorted = sorted(points, key=lambda p: p[0])
-                        x_positions = [p[0] for p in points_sorted]
-                        point_names = [p[1] for p in points_sorted]
+                        # Use points in original order (same as normal still maps), don't sort
+                        # Always use forward trajectory direction
+                        traj_name = "foreward"
+
+                        x_positions = [p[0] for p in points]
+                        point_names = [p[1] for p in points]
                         
                         # Calculate exposure time
                         exposure_time = (
@@ -1206,7 +1232,7 @@ class MainController(object):
                             f"Performing still map with XPS trajectories: {len(x_positions)} positions "
                             f"at y={y:.4f}, z={z:.4f}"
                         )
-                        
+
                         # Collect the row using XPS trajectories
                         collect_still_map_thread = Thread(
                             target=collect_still_map_with_xps,
@@ -1227,6 +1253,7 @@ class MainController(object):
                                 "filename_map": filename_map,
                                 "rename_files": self.widget.rename_files_cb.isChecked(),
                                 "callback_fcn": self.check_if_aborted,
+                                "trajectory_name": traj_name,
                             },
                         )
                         collect_still_map_thread.start()
@@ -1351,19 +1378,6 @@ class MainController(object):
                                 self.detector
                             )
 
-                        # Check if file exists before collecting
-                        try:
-                            filenumber_int = int(filenumber) if filenumber else 1
-                        except (ValueError, TypeError):
-                            filenumber_int = 1
-                        file_exists, existing_file_path = self.check_file_will_exist(
-                            self.filepath, filename, filenumber_int, self.detector, num_files=1
-                        )
-                        if file_exists:
-                            reply = self.show_overwrite_dialog(existing_file_path)
-                            if reply == QtWidgets.QMessageBox.Cancel:
-                                self.reset_gui_state()
-                                return
 
                         logger.info(
                             "Performing still image for:\n\t\t{}\n\t\t{}".format(
@@ -1432,19 +1446,6 @@ class MainController(object):
                                 self.detector
                             )
 
-                        # Check if file exists before collecting
-                        try:
-                            filenumber_int = int(filenumber) if filenumber else 1
-                        except (ValueError, TypeError):
-                            filenumber_int = 1
-                        file_exists, existing_file_path = self.check_file_will_exist(
-                            self.filepath, filename, filenumber_int, self.detector, num_files=1
-                        )
-                        if file_exists:
-                            reply = self.show_overwrite_dialog(existing_file_path)
-                            if reply == QtWidgets.QMessageBox.Cancel:
-                                self.reset_gui_state()
-                                return
 
                         if self.detector == "pilatus":
                             caput(
@@ -1545,27 +1546,6 @@ class MainController(object):
                                 self.detector
                             )
 
-                        # Calculate number of steps for file existence check
-                        omega_step = experiment.omega_step
-                        num_steps = int(
-                            abs(experiment.omega_end - experiment.omega_start)
-                            / omega_step
-                        )
-                        
-                        # Check if any files exist before collecting
-                        try:
-                            filenumber_int = int(filenumber) if filenumber else 1
-                        except (ValueError, TypeError):
-                            filenumber_int = 1
-                        file_exists, existing_file_path = self.check_file_will_exist(
-                            self.filepath, filename, filenumber_int, self.detector, num_files=num_steps
-                        )
-                        if file_exists:
-                            reply = self.show_overwrite_dialog(existing_file_path)
-                            if reply == QtWidgets.QMessageBox.Cancel:
-                                self.reset_gui_state()
-                                return
-
                         if self.detector == "pilatus":
                             caput(
                                 epics_config[self.detector] + ":TIFF1:FilePath",
@@ -1609,7 +1589,7 @@ class MainController(object):
                         if self.crysalis_config.create_crysalis_files_cb.isChecked():
                             num_steps = int(
                                 (experiment.omega_end - experiment.omega_start)
-                                / omega_step
+                                / experiment.omega_step
                             )
                             previous_detector_settings = self.prepare_for_crysalis_collection(
                                 self.filepath,
@@ -1617,7 +1597,7 @@ class MainController(object):
                                 self.crysalis_config.add_frames_in_tif_cb.isChecked(),
                                 num_steps,
                                 experiment.omega_start,
-                                omega_step,
+                                experiment.omega_step,
                             )
 
                             if self.detector == "pilatus":
@@ -1644,7 +1624,7 @@ class MainController(object):
                                         "theta": 0,
                                         "kappa": 0,
                                         "phi": 0,
-                                        "domega": omega_step,
+                                        "domega": experiment.omega_step,
                                         "dtheta": 0,
                                         "dkappa": 0,
                                         "dphi": 0,
@@ -1679,13 +1659,13 @@ class MainController(object):
                                     self.filepath.replace(
                                         "/home/dac_user/cars6/Data/", "T:/"
                                     ),
-                                    f"{filename}_{filenumber:03}",
+                                    f"{filename}_{filenumber:04}",
                                 )
                                 copy_set_ccd(
                                     self.filepath.replace(
                                         "/home/dac_user/cars6/Data/", "T:/"
                                     ),
-                                    f"{filename}_{filenumber:03}",
+                                    f"{filename}_{filenumber:04}",
                                     eiger2_crysalis_config,
                                 )
 
@@ -1701,7 +1681,7 @@ class MainController(object):
                                         "theta": 0,
                                         "kappa": 0,
                                         "phi": 0,
-                                        "domega": omega_step,
+                                        "domega": experiment.omega_step,
                                         "dtheta": 0,
                                         "dkappa": 0,
                                         "dphi": 0,
@@ -1721,7 +1701,7 @@ class MainController(object):
                                 ]
                                 createCrysalis(
                                     scans,
-                                    f"{filename}_{filenumber:03}",
+                                    f"{filename}_{filenumber:04}",
                                     self.filepath.replace(
                                         "/home/dac_user/cars6/Data/", "T:/"
                                     ),
@@ -1733,7 +1713,7 @@ class MainController(object):
                                         self.filepath.replace(
                                             "/home/dac_user/cars6/Data/", "T:/"
                                         ),
-                                        f"{filename}_{filenumber:03}",
+                                        f"{filename}_{filenumber:04}",
                                         par_filepath,
                                     )
                                 else:
@@ -1742,7 +1722,7 @@ class MainController(object):
                                         self.filepath.replace(
                                             "/home/dac_user/cars6/Data/", "T:/"
                                         ),
-                                        f"{filename}_{filenumber:03}",
+                                        f"{filename}_{filenumber:04}",
                                         par_filepath,
                                     )
 
@@ -1755,7 +1735,7 @@ class MainController(object):
                                 "detector_position_z": experiment.detector_pos_z,
                                 "omega_start": experiment.omega_start,
                                 "omega_end": experiment.omega_end,
-                                "omega_step": omega_step,
+                                "omega_step": experiment.omega_step,
                                 "actual_omega_step": experiment.omega_step,
                                 "exposure_time": time_per_step,
                                 "x": sample_point.x,
@@ -1772,6 +1752,10 @@ class MainController(object):
                             time.sleep(0.2)
 
                         if self.crysalis_config.create_crysalis_files_cb.isChecked():
+
+                            self.set_status_lbl("Converting files...", "#FF0000")
+                            QtWidgets.QApplication.processEvents()
+
                             if self.detector == "pilatus":
                                 transform_cbf_to_esperanto(
                                     cbf_file_path, str(filename), scans[0][0]
@@ -1990,7 +1974,7 @@ class MainController(object):
                         _, _, filenumber = self.get_filename_info(self.detector)
                     else:
                         _, filename, filenumber = self.get_filename_info(self.detector)
-                    filenames.append(filename + "_" + str("%03d" % int(filenumber)))
+                    filenames.append(filename + "_" + str("%04d" % int(filenumber)))
 
                 if sample_point.perform_wide_scan_for_setup[exp_ind]:
                     if self.widget.rename_files_cb.isChecked():
@@ -2005,7 +1989,7 @@ class MainController(object):
 
                     else:
                         _, filename, filenumber = self.get_filename_info(self.detector)
-                    filenames.append(filename + "_" + str("%03d" % int(filenumber)))
+                    filenames.append(filename + "_" + str("%04d" % int(filenumber)))
 
                 if sample_point.perform_step_scan_for_setup[exp_ind]:
                     if self.widget.rename_files_cb.isChecked():
@@ -2020,7 +2004,7 @@ class MainController(object):
 
                     else:
                         _, filename, filenumber = self.get_filename_info(self.detector)
-                    filenames.append(filename + "_" + str("%03d" % int(filenumber)))
+                    filenames.append(filename + "_" + str("%04d" % int(filenumber)))
 
         return filenames
 
@@ -2208,58 +2192,8 @@ class MainController(object):
         return exists == 1
 
     def check_filename_exists(self, filename):
-        return os.path.isfile(filename + ".tif")
-    
-    def get_full_file_path(self, filepath, filename, filenumber, detector):
-        """
-        Constructs the full file path based on detector type.
-        For pilatus: filename_filenumber_00001.tif (format: %s%s_%4.4d_00001.tif)
-        For eiger2: filename_filenumber.h5
-        """
-        if detector == "pilatus":
-            # Format: filename_filenumber_00001.tif (filenumber is 4 digits: 0001, 0002, etc.)
-            full_filename = f"{filename}_{filenumber:04d}_00001.tif"
-        elif detector == "eiger2":
-            # Format: filename_filenumber.h5
-            full_filename = f"{filename}_{filenumber:03d}.h5"
-        else:
-            full_filename = f"{filename}_{filenumber:04d}_00001.tif"
-        
-        return os.path.join(filepath, full_filename)
-    
-    def check_file_will_exist(self, filepath, filename, filenumber, detector, num_files=1):
-        """
-        Checks if any of the files that will be created already exist.
-        For step scans, num_files > 1 to check multiple files.
-        Returns True if any file exists, False otherwise.
-        """
-        for i in range(num_files):
-            file_number = filenumber + i
-            full_path = self.get_full_file_path(filepath, filename, file_number, detector)
-            if os.path.isfile(full_path):
-                return True, full_path
-        return False, None
-    
-    def show_overwrite_dialog(self, file_path):
-        """
-        Shows a dialog asking the user if they want to overwrite an existing file.
-        Returns QtWidgets.QMessageBox.Yes if user wants to overwrite,
-        QtWidgets.QMessageBox.Cancel if user wants to cancel.
-        """
-        msg_box = QtWidgets.QMessageBox()
-        msg_box.setWindowFlags(QtCore.Qt.Tool)
-        msg_box.setText(
-            f"File already exists:\n{file_path}\n\n"
-            "Do you want to overwrite it?"
-        )
-        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle("File Overwrite Warning")
-        msg_box.setStandardButtons(
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel
-        )
-        msg_box.setDefaultButton(QtWidgets.QMessageBox.Cancel)
-        msg_box.exec_()
-        return msg_box.result()
+        file_ext = ".h5" if self.detector == "eiger2" else ".tif"
+        return os.path.isfile(filename + file_ext)
 
     def check_conditions(self):
         if int(caget("13IDD:m103.RBV")) > -170:

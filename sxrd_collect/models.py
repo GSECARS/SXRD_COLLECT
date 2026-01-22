@@ -88,11 +88,8 @@ class SxrdModel(object):
 
         map = OrderedDict()
 
-        for y_ind, y in enumerate(y_map):
-            # Snake pattern: alternate direction for each row
-            # Even rows (0, 2, 4...): left to right
-            # Odd rows (1, 3, 5...): right to left
-            if y_ind % 2 == 0:
+        for y in y_map:
+            for x in x_map:
                 x_iter = x_map  # Left to right
             else:
                 x_iter = x_map[::-1]  # Right to left (reversed)

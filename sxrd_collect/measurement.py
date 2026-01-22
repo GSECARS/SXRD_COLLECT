@@ -18,6 +18,7 @@
 
 import time
 import logging
+import numpy as np
 from functools import partial
 from epics import caput, caget, PV, camonitor, camonitor_clear
 from threading import Thread
@@ -103,8 +104,12 @@ def collect_step_data(controller, detector_choice, detector_position_x, detector
         elif detector_choice == 'eiger2':
             caput(epics_config[detector_choice] + ':cam1:TriggerMode', 2, wait=True)  # 2: External series, 3: External enable
             caput(epics_config[detector_choice] + ':cam1:AcquirePeriod', exposure_time*0.99-0.001, wait=True)
+            filenumber = caget(epics_config[detector_choice] + ':HDF1:FileNumber')
             caput(epics_config[detector_choice] + ':HDF1:NumCapture', num_steps)
             caput(epics_config[detector_choice] + ':HDF1:Capture', 1)
+            # Set FileNumber again after Capture (Capture may reset it to 1)
+            if filenumber is not None:
+                caput(epics_config[detector_choice] + ':HDF1:FileNumber', int(filenumber), wait=True)
 
         caput(epics_config[detector_choice] + ':cam1:AcquireTime', exposure_time*0.99-0.001, wait=True)
         caput(epics_config[detector_choice] + ':cam1:NumImages', num_steps, wait=True)
@@ -244,7 +249,8 @@ def collect_single_data(detector_choice, detector_position_x, detector_position_
 def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detector_position_z, 
                                  exposure_time, x_positions, y, z, omega, sample_point_names=None, 
                                  filepath=None, filename_base=None, filenumber_base=None, 
-                                 filename_map=None, rename_files=False, callback_fcn=None):
+                                 filename_map=None, rename_files=False, callback_fcn=None,
+                                 trajectory_name="foreward"):
     """
     Performs still map collection using XPS trajectories for x motor movement.
     Uses XPS define_line_trajectories to move x motor through all positions, triggering detector at each position.
@@ -278,9 +284,9 @@ def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detect
     
     # Move y, z, omega to correct positions (constant for this map row)
     logger.info(f'Moving to map row: y={y}, z={z}, omega={omega}')
-    move_to_sample_pos(x_positions[0], y, z)  # Move to first x position
-    move_to_omega_position(omega)
-    move_to_detector_position(detector_position_x, detector_position_z, detector_choice)
+    move_to_sample_pos(x_positions[0], y, z, with_x=False)
+    # move_to_omega_position(omega)
+    # move_to_detector_position(detector_position_x, detector_position_z, detector_choice)
     
     # Prepare detector settings
     previous_detector_settings = prepare_detector_settings(detector_choice)
@@ -290,31 +296,50 @@ def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detect
     # Calculate scan parameters for XPS trajectory
     scan_start = x_positions[0]
     scan_end = x_positions[-1]
-    scan_range = scan_end - scan_start
+    scan_range = scan_end - scan_start  # total distance to cover
     
-    # Calculate step size (assuming uniform spacing, use average if not)
+    # Calculate step size from spacing (assume uniform, keep sign to match direction)
     if num_positions > 1:
-        step = scan_range / (num_positions - 1)
+        step = x_positions[1] - x_positions[0]
     else:
         step = 0
     
-    # Total scan time
+    # Round to avoid fp noise
+    scan_start = round(scan_start, 6)
+    scan_end = round(scan_end, 6)
+    scan_range = round(scan_range, 6)
+    step = round(step, 6)
+
+    # Ensure step sign matches scan direction
+    if scan_range < 0 and step > 0:
+        step = -step
+    if scan_range > 0 and step < 0:
+        step = -step
+    
+    # Number of movements (segments between points)
+    num_segments = num_positions - 1 if num_positions > 1 else 0
+
+    # Time parameters: match working standalone example exactly
+    # Use pixeltime=None, scantime=exposure_time * num_points (not num_segments!)
+    pixeltime = None
     scantime = exposure_time * num_positions
     
     logger.info(f'Starting XPS trajectory for still map: {num_positions} positions')
-    logger.info(f'XPS trajectory: start={scan_start:.4f}, end={scan_end:.4f}, step={step:.4f}, scantime={scantime:.2f}s')
+    pixeltime_str = f'{pixeltime:.4f}s' if pixeltime is not None else 'auto'
+    logger.info(f'XPS trajectory: start={scan_start:.4f}, end={scan_end:.4f}, range={scan_range:.6f}, step={step:.6f}, segments={num_segments}, pixeltime={pixeltime_str}')
     
-    # Set up detector for multiple acquisitions
-    if detector_choice == 'eiger2':
-        caput(epics_config[detector_choice] + ':cam1:TriggerMode', 2, wait=True)  # External series
+    if detector_choice == 'pilatus':
+        caput(epics_config[detector_choice] + ':cam1:TriggerMode', 3, wait=True)  # 3 is Multi-Trigger, 2 is External
+
+    elif detector_choice == 'eiger2':
+        caput(epics_config[detector_choice] + ':cam1:TriggerMode', 2, wait=True)  # 2: External series, 3: External enable
         caput(epics_config[detector_choice] + ':cam1:AcquirePeriod', exposure_time*0.99-0.001, wait=True)
         caput(epics_config[detector_choice] + ':HDF1:NumCapture', num_positions)
         caput(epics_config[detector_choice] + ':HDF1:Capture', 1)
-    elif detector_choice == 'pilatus':
-        caput(epics_config[detector_choice] + ':cam1:TriggerMode', 3, wait=True)  # Multi-Trigger
-    
+
     caput(epics_config[detector_choice] + ':cam1:AcquireTime', exposure_time*0.99-0.001, wait=True)
     caput(epics_config[detector_choice] + ':cam1:NumImages', num_positions, wait=True)
+    caput(epics_config[detector_choice] + ':cam1:Acquire', 1)
     
     # Set up file naming for first position (will need to handle per-position naming differently)
     if filepath and filename_base is not None:
@@ -334,33 +359,116 @@ def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detect
             except (ValueError, TypeError):
                 first_filenumber = 1
             caput(epics_config[detector_choice] + ":HDF1:FileNumber", first_filenumber, wait=True)
-    
-    # Define XPS trajectory
+
+
+    # Define XPS trajectory using array of positions
+    # Use define_array_trajectory since we already have an array of discrete positions
     try:
-        xps.define_line_trajectories(
-            axis=POSITIONERS,
-            group=GROUP_NAME,
-            stop=scan_range,
-            step=step,
-            pixeltime=None,
-            scantime=scantime,
-        )
+        if num_positions < 2:
+            raise ValueError("Need at least 2 positions for a trajectory")
+
+        logger.info(f'Defining array trajectory with {num_positions} positions')
+        logger.info(f'Positions: {x_positions[0]:.6f} to {x_positions[-1]:.6f}')
+        logger.info(f'Exposure time per position: {exposure_time:.6f}s, total scantime: {scantime:.6f}s')
+
+        # Set trajectory group first if not already set
+        xps.set_trajectory_group(GROUP_NAME)
         
+        # Get EPICS offset and convert positions to XPS coordinate system
+        # Verify the relationship: get current positions from both systems
+        try:
+            epics_offset = caget('13IDD:m98.OFF')
+            if epics_offset is None:
+                epics_offset = 0.0
+        except:
+            epics_offset = 0.0
+            logger.warning('Could not read EPICS offset, assuming 0.0')
+        
+        # Get current positions to verify coordinate relationship
+        try:
+            current_epics_pos = caget(epics_config['sample_position_x'])
+            # Try to get XPS position - may need to query XPS directly or use raw PV
+            # For now, we'll use the offset to convert
+            logger.info(f'Current EPICS position: {current_epics_pos:.6f}')
+            logger.info(f'EPICS offset (13IDD:m98.OFF): {epics_offset:.6f}')
+        except:
+            current_epics_pos = None
+
+        direction = caget("13IDD:m98.DIR", as_string=False)
+
+        # Negative direction
+        if direction:
+            xps_positions = [(x + epics_offset) for x in x_positions]
+        else:
+            # Default to positive direction if direction is None or unexpected value
+            logger.warning(f'Unexpected direction value: {direction}, defaulting to positive direction')
+            xps_positions = [x + epics_offset * -1 for x in x_positions]
+    
+        # define_array_trajectory needs positions as a dict: {positioner_name: array}
+        # The positioner name is just the axis name (e.g., "ST-Hor"), not group.axis
+        positions_dict = {POSITIONERS: np.array(xps_positions)}
+        
+        logger.info(f'Using positioner: {POSITIONERS}, {num_positions} positions')
+        
+        # Switch to XPS
+        caput(epics_config["detector_trigger_17"], 1, wait=True)
+
         # Start detector acquisition
         caput(epics_config[detector_choice] + ':cam1:Acquire', 1)
         
-        # Run XPS trajectory
-        trajectory_name = "still_map_x_trajectory"
-        xps.run_trajectory(name=trajectory_name, save=False, clean=True)
+        traj_info = xps.define_array_trajectory(
+            positions=positions_dict,
+            dtime=exposure_time,
+            name="foreward",
+            verbose=True,
+        )
+        
+        # Log trajectory info for debugging
+        if traj_info:
+            logger.info(f'Trajectory info: npulses={traj_info.get("npulses", "unknown")}, nsegments={traj_info.get("nsegments", "unknown")}')
+            logger.info(f'Expected {num_positions} images, trajectory has {traj_info.get("npulses", num_positions)} pulses')
+
+        caput(epics_config['table_shutter'], 0, wait=True)       
+        
+        # Run the named trajectory (already defined above with name=traj_name)
+        xps.run_trajectory(name="foreward", save=False, clean=True)
         
         # Wait for detector acquisition to complete
+        # Note: trajectory may have more pulses than positions (ramp segments)
+        # but detector should only capture num_positions images
+        max_wait_time = exposure_time * num_positions * 2  # Allow 2x the expected time
+        start_time = time.time()
+        images_captured = 0
+        
         while caget(epics_config[detector_choice] + ':cam1:Acquire'):
             time.sleep(0.1)
+            
+            # Check if we've captured enough images (for eiger2)
+            if detector_choice == 'eiger2':
+                try:
+                    images_captured = caget(epics_config[detector_choice] + ':HDF1:NumCaptured_RBV', default=0)
+                    if images_captured >= num_positions:
+                        logger.info(f'Captured {images_captured} images (expected {num_positions}), stopping detector')
+                        caput(epics_config[detector_choice] + ':cam1:Acquire', 0)
+                        break
+                except:
+                    pass
+            
+            # Timeout check
+            if time.time() - start_time > max_wait_time:
+                logger.warning(f'Detector acquisition timeout after {max_wait_time:.1f}s, stopping')
+                caput(epics_config[detector_choice] + ':cam1:Acquire', 0)
+                break
+                
             if callback_fcn is not None and not callback_fcn():
                 logger.info('Still map collection was aborted during trajectory!')
+                caput(epics_config[detector_choice] + ':cam1:Acquire', 0)
                 break
         
-        logger.info('XPS trajectory completed')
+        # Close the shutter after the map
+        caput(epics_config['table_shutter'], 1, wait=True)
+        
+        logger.info(f'XPS trajectory completed. Images captured: {images_captured if detector_choice == "eiger2" else "unknown"}')
         
     except Exception as e:
         logger.error(f'Error running XPS trajectory: {e}')
@@ -383,33 +491,47 @@ def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detect
             while caget(epics_config[detector_choice] + ':cam1:Acquire'):
                 time.sleep(0.1)
     
+        # Close the shutter after the map
+        caput(epics_config['table_shutter'], 1, wait=True)
+    
     reset_detector_settings(previous_detector_settings)
     logger.info('Still map collection with XPS finished.\n')
     
     return
 
 
-def move_to_sample_pos(x, y, z, wait=True, callbacks=[]):
+def move_to_sample_pos(x, y, z, with_x=True, wait=True, callbacks=[]):
     logger.info('Moving Sample to x: {}, y: {}, z: {}'.format(x, y, z))
-    motor_x = PV(epics_config['sample_position_x'])
+    if with_x:
+        motor_x = PV(epics_config['sample_position_x'])
+        motor_x.put(x, use_complete=True)
     motor_y = PV(epics_config['sample_position_y'])
     motor_z = PV(epics_config['sample_position_z'])
-    motor_x.put(x, use_complete=True)
     motor_y.put(y, use_complete=True)
     motor_z.put(z, use_complete=True)
 
     if wait:
-        while not motor_x.put_complete and \
-                not motor_y.put_complete and \
-                not motor_z.put_complete:
-            time.sleep(0.1)
+        if with_x:
+            while not motor_x.put_complete and \
+                    not motor_y.put_complete and \
+                    not motor_z.put_complete:
+                time.sleep(0.1)
+        else:
+            while not motor_y.put_complete and \
+                    not motor_z.put_complete:
+                time.sleep(0.1)
         for callback in callbacks:
             callback()
-    motor_x.put(x, wait=True)
+    
+    if with_x:
+        motor_x.put(x, wait=True)
     motor_y.put(y, wait=True)
     motor_z.put(z, wait=True)
     # time.sleep(0.2)  # TODO: Changed during map improvements: original was 0.5s
-    logger.info('Moving Sample to x: {:.2f}, y: {:.2f}, z: {:.2f} finished.\n'.format(x, y, z))
+    if with_x:
+        logger.info('Moving Sample to x: {:.2f}, y: {:.2f}, z: {:.2f} finished.\n'.format(x, y, z))
+    else:
+        logger.info('Moving Sample to y: {:.2f}, z: {:.2f} finished.\n'.format(y, z))
     return
 
 

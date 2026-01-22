@@ -64,7 +64,7 @@ def padarray(array):
 def transform_h5_to_esperanto(filepath, basename, filenumber, esperanto_scan_info):
     
     options = Options(
-        output=f"{{dirname}}/{basename}_{filenumber:03}_crys/{basename}_{filenumber:03}_1_{{index}}.esperanto",
+        output=f"{{dirname}}/{basename}_{filenumber:04}_crys/{basename}_{filenumber:04}_1_{{index}}.esperanto",
         wavelength=0.2952,
         distance=esperanto_scan_info["dist"],
         beam=[esperanto_scan_info["center_x"], esperanto_scan_info["center_y"]],
@@ -78,7 +78,7 @@ def transform_h5_to_esperanto(filepath, basename, filenumber, esperanto_scan_inf
         phi=str(esperanto_scan_info["phi"]),
         omega=f"{esperanto_scan_info["omega_start"]} + {esperanto_scan_info["domega"]} * i",
         polarization=esperanto_scan_info["mono"],
-        images=[f"{filepath}/{basename}_{filenumber:03}.h5"]
+        images=[f"{filepath}/{basename}_{filenumber:04}.h5"]
     )
     converter = eiger2crysalis.Converter(options=options)
     converter.convert_all()
