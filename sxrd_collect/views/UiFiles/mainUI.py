@@ -443,7 +443,7 @@ class Ui_SXRDCollectWidget(object):
         self.verticalLayout_8.addWidget(self.line_9)
         self.use_xps_trajectories_still_cb = QtWidgets.QCheckBox(SXRDCollectWidget)
         self.use_xps_trajectories_still_cb.setObjectName(_fromUtf8("use_xps_trajectories_still_cb"))
-        self.use_xps_trajectories_still_cb.setChecked(True)
+        self.use_xps_trajectories_still_cb.setChecked(False)
         self.verticalLayout_8.addWidget(self.use_xps_trajectories_still_cb)
 
         spacerItem6 = QtWidgets.QSpacerItem(20, 50, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)

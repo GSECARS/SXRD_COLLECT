@@ -398,11 +398,11 @@ def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detect
 
         # Negative direction
         if direction:
-            xps_positions = [(x + epics_offset) for x in x_positions]
+            xps_positions = [(x - epics_offset)  * -1 for x in x_positions]
         else:
             # Default to positive direction if direction is None or unexpected value
             logger.warning(f'Unexpected direction value: {direction}, defaulting to positive direction')
-            xps_positions = [x + epics_offset * -1 for x in x_positions]
+            xps_positions = [x + epics_offset for x in x_positions]
     
         # define_array_trajectory needs positions as a dict: {positioner_name: array}
         # The positioner name is just the axis name (e.g., "ST-Hor"), not group.axis
@@ -427,6 +427,8 @@ def collect_still_map_with_xps(xps, detector_choice, detector_position_x, detect
         if traj_info:
             logger.info(f'Trajectory info: npulses={traj_info.get("npulses", "unknown")}, nsegments={traj_info.get("nsegments", "unknown")}')
             logger.info(f'Expected {num_positions} images, trajectory has {traj_info.get("npulses", num_positions)} pulses')
+
+            logger.warning(f'Trajectory positions: {positions_dict}, dtime={exposure_time}, name="foreward", verbose=True')
 
         caput(epics_config['table_shutter'], 0, wait=True)       
         

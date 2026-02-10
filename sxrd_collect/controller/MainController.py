@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import time
+from pathlib import Path
 from threading import Thread
 
 import epics
@@ -1186,6 +1187,9 @@ class MainController(object):
                         row_key = (round(sp.y, 6), round(sp.z, 6))  # Round to avoid float precision issues
                         rows[row_key].append((sp.x, sp.name))
                     
+                    # Initialize map folder path - will be set after we know the filename
+                    map_filepath = None
+                    
                     # Process each row with XPS trajectories
                     # Iterate rows in a stable order (sorted by y then z)
                     for row_idx, ((y, z), points) in enumerate(sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1]))):
@@ -1227,6 +1231,28 @@ class MainController(object):
                             _, first_filename, filenumber = self.get_filename_info(self.detector)
                             for pt_name in point_names:
                                 filename_map[pt_name] = first_filename
+                        
+                        # # Create map folder using only: S (sample name), basename, and frame number
+                        # if map_filepath is None:
+                        #     # Extract S from first point name (e.g., "S1_map_1" -> "S1" or just use first point name)
+                        #     first_pt_name = point_names[0] if point_names else "S1"
+                        #     # Extract S number if it exists (e.g., "S1" from "S1_map_1" or just use the name)
+                        #     s_match = re.search(r'^(S\d+)', first_pt_name)
+                        #     s_name = s_match.group(1) if s_match else first_pt_name.split('_')[0] if '_' in first_pt_name else first_pt_name
+                            
+                        #     # Convert filenumber to int for proper formatting
+                        #     filenumber_int = int(filenumber) if isinstance(filenumber, str) else filenumber
+                            
+                        #     # Build folder name: basename_S{number}_{filenumber:04}_map
+                        #     folder_basename = f"{self.basename}_{s_name}_{filenumber_int:04d}"
+                            
+                        #     # For folder creation only, replace path with T:/ (for eiger2 detector path)
+                        #     folder_filepath = self.filepath.replace("/home/dac_user/cars6/Data/", "T:/")
+                            
+                        #     map_filepath = Path(folder_filepath) / f"{folder_basename}_map"
+                        #     map_filepath.mkdir(parents=True, exist_ok=True)
+                        #     map_filepath = str(map_filepath)
+                        #     logger.info(f"Created map folder for XPS collection: {map_filepath}")
                         
                         logger.info(
                             f"Performing still map with XPS trajectories: {len(x_positions)} positions "
