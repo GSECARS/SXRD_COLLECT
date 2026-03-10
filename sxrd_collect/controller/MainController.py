@@ -67,7 +67,9 @@ class MainController(object):
         # self.populate_filename()
         self.connect_checkboxes()
         self.abort_collection = False
-        self.logging_handler = InfoLoggingHandler(self.update_status_txt)
+        self._log_emitter = LogSignalEmitter()
+        self._log_emitter.message.connect(self.update_status_txt)
+        self.logging_handler = InfoLoggingHandler(self._log_emitter.message.emit)
         logger.addHandler(self.logging_handler)
         self.status_txt_scrollbar_is_at_max = True
         self.widget.setup_table.resizeColumnsToContents()
@@ -1838,6 +1840,11 @@ class MainController(object):
             if "OK" in caget(epics_config["status_message"], as_string=True):
                 return True
         return False
+
+
+class LogSignalEmitter(QtCore.QObject):
+    """Emits log messages; slot runs on main thread when emit() is called from worker threads."""
+    message = QtCore.Signal(str)
 
 
 class InfoLoggingHandler(logging.Handler):
